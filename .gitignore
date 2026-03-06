@@ -1,4 +1,7 @@
-./venv/
-./app/
-./api.txt
-./bot.db
+# Folders
+venv/
+app/
+
+# files
+api.txt
+bot.db
