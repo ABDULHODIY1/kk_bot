@@ -11,7 +11,7 @@ from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramBadRequest
 
 # --- SOZLAMALAR ---
-BOT_TOKEN = "8624714770:AAHQTY1Sp9Qnb5LqQBv5YC8pQEXE3th5sQg"
+BOT_TOKEN = ""
 ADMIN_IDS = [7925720227]
 MOVIE_CHANNEL_ID = -1003863041654 # Raqam ko'rinishida yozgan ma'qul
 
