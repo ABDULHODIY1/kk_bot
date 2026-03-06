@@ -12,8 +12,8 @@ from aiogram.exceptions import TelegramBadRequest
 
 # --- SOZLAMALAR ---
 BOT_TOKEN = ""
-ADMIN_IDS = [1234567890]
-MOVIE_CHANNEL_ID = -10012345678 # Raqam ko'rinishida yozgan ma'qul
+ADMIN_IDS = [7925720227]
+MOVIE_CHANNEL_ID = -1003863041654 # Raqam ko'rinishida yozgan ma'qul
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
