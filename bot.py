@@ -10,7 +10,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramBadRequest
 
-# --- SOZLAMALAR ---
 BOT_TOKEN = ""
 ADMIN_IDS = []
 MOVIE_CHANNEL_ID = ...
@@ -19,13 +18,11 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- HOLATLAR (FSM) ---
 class AdminStates(StatesGroup):
     waiting_for_channel_id = State()
     waiting_for_channel_url = State()
     waiting_for_broadcast = State()
 
-# --- BAZA BILAN ISHLASH ---
 async def init_db():
     async with aiosqlite.connect("bot.db") as db:
         await db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
