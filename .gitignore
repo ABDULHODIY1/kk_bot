@@ -1,4 +1,4 @@
-api.txt
-bot.db
-./app
-.venv
+./.venv/
+./app/
+./api.txt
+./bot.db
