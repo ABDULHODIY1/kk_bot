@@ -12,8 +12,8 @@ from aiogram.exceptions import TelegramBadRequest
 
 # --- SOZLAMALAR ---
 BOT_TOKEN = ""
-ADMIN_IDS = [7925720227]
-MOVIE_CHANNEL_ID = -1003863041654 # Raqam ko'rinishida yozgan ma'qul
+ADMIN_IDS = []
+MOVIE_CHANNEL_ID = ...
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -32,18 +32,14 @@ async def init_db():
         await db.execute("CREATE TABLE IF NOT EXISTS movies (code TEXT PRIMARY KEY, post_id INTEGER)")
         await db.execute("CREATE TABLE IF NOT EXISTS channels (channel_id TEXT PRIMARY KEY, url TEXT)")
         await db.commit()
-
-# --- KODNI CAPTIONDAN AJRATISH ---
 def extract_code_from_caption(caption):
     if not caption:
         return None
-    # Template: "🔎 Kino kodi: 123" ni qidiradi
     match = re.search(r'Kino kodi:\s*(\d+)', caption, re.IGNORECASE)
     if match:
         return match.group(1)
     return None
 
-# --- KANAL POSTINI QABUL QILISH (Yangi va Tahrirlangan postlar uchun) ---
 @dp.channel_post(F.video | F.document)
 @dp.edited_channel_post(F.video | F.document)
 async def save_movie_from_channel(message: Message):
@@ -56,7 +52,6 @@ async def save_movie_from_channel(message: Message):
                 await db.commit()
             logging.info(f"✅ Kino saqlandi: Kod={code}, Post ID={post_id}")
 
-# --- MAJBURIY OBUNA TEKSHIRUVI ---
 async def check_subscription(user_id: int) -> InlineKeyboardMarkup | None:
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT channel_id, url FROM channels") as cursor:
@@ -69,7 +64,7 @@ async def check_subscription(user_id: int) -> InlineKeyboardMarkup | None:
             if member.status in [ChatMemberStatus.LEFT, ChatMemberStatus.KICKED]:
                 unsubscribed_channels.append((channel_id, url))
         except Exception:
-            pass # Bot kanalda admin bo'lmasa yoki kanal topilmasa
+            pass 
             
     if not unsubscribed_channels:
         return None
@@ -80,8 +75,6 @@ async def check_subscription(user_id: int) -> InlineKeyboardMarkup | None:
     buttons.append([InlineKeyboardButton(text="✅ Obunani tekshirish", callback_data="check_sub")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-# --- FOYDALANUVCHI QISMI ---
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     async with aiosqlite.connect("bot.db") as db:
@@ -106,7 +99,6 @@ async def process_sub_check(call: CallbackQuery):
 
 @dp.message(F.text.regexp(r'^\d+$'))
 async def find_movie(message: Message):
-    # Majburiy obuna tekshiruvi
     sub_keyboard = await check_subscription(message.from_user.id)
     if sub_keyboard:
         await message.answer("⚠️ Botdan foydalanish uchun kanallarga obuna bo'ling:", reply_markup=sub_keyboard)
@@ -120,14 +112,11 @@ async def find_movie(message: Message):
     if result:
         post_id = result[0]
         try:
-            # copy_message o'rniga forward_message dan foydalanamiz
             await bot.forward_message(
                 chat_id=message.chat.id,
                 from_chat_id=MOVIE_CHANNEL_ID,
                 message_id=post_id
             )
-            # Forwarddan keyin xabar yuborish (ixtiyoriy)
-            # await message.answer(f"🎬 {movie_code}-kodli kino topildi!") 
             
         except Exception as e:
             logging.error(f"Send error: {e}")
@@ -135,7 +124,6 @@ async def find_movie(message: Message):
     else:
         await message.answer("😔 Bunday kodli kino topilmadi.")
 
-# --- ADMIN PANEL QISMI ---
 def admin_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Kanal qo'shish", callback_data="admin_add_channel"),
@@ -220,7 +208,7 @@ async def broadcast_message(message: Message, state: FSMContext):
         try:
             await message.send_copy(chat_id=user_id)
             count += 1
-            await asyncio.sleep(0.05) # Spamdan himoya
+            await asyncio.sleep(0.05)
         except: pass
     await message.answer(f"✅ {count} kishiga yuborildi.")
     await state.clear()
