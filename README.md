@@ -1,2 +1,2 @@
 # kk_bot
-# kk_bot
+# kodli-kino-bot

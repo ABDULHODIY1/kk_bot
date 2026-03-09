@@ -4,3 +4,8 @@ app/
 
 # files
 api.txt
+.env
+bot.db
+bot2.db
+bot3.db
+kino_pro.db
