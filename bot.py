@@ -252,7 +252,50 @@ class TokenBucket:
             return False
 
 rate_limiter = TokenBucket(RATE_LIMIT_PER_MIN)
+if USE_TELETHON:
+    from telethon import TelegramClient
 
+    tele_client = TelegramClient(
+        TELETHON_SESSION,
+        TG_API_ID,
+        TG_API_HASH,
+    )
+
+    async def scan_channel_history(channel_id: str, limit: int = 0):
+        """
+        Kanaldagi barcha postlarni o'qib, kino kodlarini bazaga saqlaydi.
+        limit=0 bo'lsa, barcha postlar o'qiladi.
+        """
+        await tele_client.start()
+        ch_entity = await tele_client.get_entity(channel_id)
+        count = 0
+
+        async for msg in tele_client.iter_messages(ch_entity, limit=limit):
+            caption = msg.text or msg.caption or ""
+            m = re.search(r'Kino kodi[:\-]?\s*(\d+)', caption, re.I)
+            if m:
+                code = m.group(1)
+                existing = await get_movie_by_code(code)
+                if existing:
+                    continue
+                title = re.sub(r'Kino kodi[:\-]?\s*\d+', '', caption, flags=re.I).strip()
+                title = (title.splitlines()[0][:180].strip()) if title else ""
+                await save_movie(code, msg.id, channel_id=str(ch_entity.id), title=title)
+                await notify_admins_new_code(code=code, channel_obj=None, post_id=msg.id, title=title)
+                count += 1
+
+        return count
+
+    async def start_full_scan_for_admin(admin_id: int):
+        """
+        Admin uchun barcha kanallarni skan qiladi.
+        """
+        channels = await get_channels()
+        total_saved = 0
+        for ch_id, _ in channels:
+            saved = await scan_channel_history(ch_id)
+            total_saved += saved
+        return total_saved
 def is_admin(user_id: int) -> bool:
     """Check if user is admin - uses synced global ADMIN_IDS"""
     return int(user_id) in [int(aid) for aid in ADMIN_IDS]
@@ -307,22 +350,6 @@ def is_scanning(admin_id: int) -> bool:
         scan_sessions.pop(admin_id, None)
         return False
     return True
-async def cb_admin_start_scan(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("❌ Ruxsat yo'q", show_alert=True)
-        return
-
-    await start_scan_for(call.from_user.id, minutes=30)  # masalan 30 daqiqa scan
-    await call.answer("🔍 Scan sessiyasi boshlandi! Forward qilingan postlarni yuboring.")
-    if call.message:
-        await call.message.edit_text(
-            "🔍 Scan sessiyasi boshlandi!\n"
-            "Forward qilgan postlaringizdagi kino kodlari avtomatik saqlanadi.\n"
-            "Scan tugashidan oldin /stop_scan yozing yoki tugmani bosing.",
-            reply_markup=make_markup([
-                [InlineKeyboardButton(text="⏹️ Scanni to‘xtatish", callback_data="admin_stop_scan")]
-            ])
-        )
 
 async def start_scan_for(admin_id: int, minutes: int):
     """Start scan session for admin"""
@@ -463,6 +490,8 @@ def only_code_kb(admin: bool = False) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="⚙️ Admin Panel", callback_data="open_admin")])
     return make_markup(rows)
 
+
+
 def admin_main_kb() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="📊 Statistika", callback_data="admin_stats"),
@@ -479,8 +508,9 @@ def admin_main_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="➖ Admin o'chirish", callback_data="admin_removeadmin")],
         [InlineKeyboardButton(text="📺 Kanal qo'shish", callback_data="admin_addchannel"),
          InlineKeyboardButton(text="🗑️ Kanallarni tozalash", callback_data="admin_clearchannels")],
-        [InlineKeyboardButton(text="🔍 Scan boshlash", callback_data="admin_start_scan"),
-         InlineKeyboardButton(text="⏹️ Scan to‘xtatish", callback_data="admin_stop_scan")],
+         [InlineKeyboardButton(text="🔍 Scan boshlash", callback_data="admin_start_scan"),
+        InlineKeyboardButton(text="⏹️ Scan to‘xtatish", callback_data="admin_stop_scan"),
+        InlineKeyboardButton(text="📜 Full kanal scan", callback_data="admin_full_scan")]
     ]
     return make_markup(rows)
 
@@ -517,7 +547,19 @@ async def cmd_start(message: Message, state: FSMContext):
                 "🍿 Salom! Faqat kino kodini yuboring (faqat raqamlar).",
                 reply_markup=only_code_kb(admin=False)
             )
-
+async def cb_admin_full_scan(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("❌ Ruxsat yo'q", show_alert=True)
+        return
+    
+    await call.answer("⏳ Full kanal scan boshlandi...")
+    try:
+        saved_count = await start_full_scan_for_admin(call.from_user.id)
+        if call.message:
+            await call.message.edit_text(f"✅ Full scan tugadi!\nSaqlangan postlar: {saved_count}")
+    except Exception as e:
+        if call.message:
+            await call.message.edit_text(f"❌ Xatolik yuz berdi: {e}")
 async def cb_check_sub(call: CallbackQuery):
     sub_kb = await check_subscription(call.from_user.id)
 
@@ -607,39 +649,49 @@ async def on_channel_post(message: Message):
             await notify_admins_new_code(code=code, channel_obj=ch, post_id=message.message_id, title=title)
     except Exception:
         logger.exception("on_channel_post error")
+
 async def on_forwarded_message(message: Message):
     if not message.forward_from_chat:
         return
     admin_id = message.from_user.id
     if not is_admin(admin_id) or not is_scanning(admin_id):
-        return  # scan faolligi yo'q
-
+        return
+    try:
+        origin_chat = message.forward_from_chat
+        origin_channel_id = origin_chat.id if origin_chat else None
+        origin_msg_id = message.forward_from_message_id or message.message_id
+    except Exception:
+        origin_channel_id = None
+        origin_msg_id = message.message_id
+    
     caption = message.caption or (message.text or "")
     m = re.search(r'Kino kodi[:\-]?\s*(\d+)', caption or "", re.I)
     if not m:
+        logger.info("Forwarded message (no code) skipped by admin during scan")
         return
     code = m.group(1)
     existing = await get_movie_by_code(code)
     title = re.sub(r'Kino kodi[:\-]?\s*\d+', '', caption, flags=re.I).strip()
-
-    # Agar mavjud bo'lsa, yangilash
-    origin_chat = message.forward_from_chat
-    origin_msg_id = message.forward_from_message_id or message.message_id
-    msg_ch = str(origin_chat.id) if origin_chat else ""
-
+    
     if existing:
         existing_ch = str(existing.get("channel_id") or "")
         existing_post = existing.get("post_id")
+        msg_ch = str(origin_channel_id) if origin_channel_id is not None else ""
         if existing_ch != msg_ch or existing_post != origin_msg_id:
             await save_movie(code, origin_msg_id, channel_id=msg_ch, title=title)
+            logger.info("Updated code=%s with new origin ch=%s post=%s", code, msg_ch, origin_msg_id)
+        else:
+            logger.info("Forwarded code already exists: %s", code)
         return
-
-    # Yangi kod saqlash
-    await save_movie(code, origin_msg_id, channel_id=msg_ch, title=title)
+    
+    await save_movie(code, origin_msg_id, channel_id=str(origin_channel_id) if origin_channel_id is not None else "", title=title)
     try:
         await message.reply(f"✅ Saqlandi: {code}", quote=True)
     except Exception:
         pass
+    logger.info("Imported forwarded code=%s from origin ch=%s post=%s", code, origin_channel_id, origin_msg_id)
+
+
 async def open_admin_panel(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
         await call.answer("❌ Bu funksiya faqat adminlar uchun", show_alert=True)
@@ -1334,6 +1386,7 @@ def register_handlers():
                        F.chat.type == "private")  
     dp.message.register(fallback_message, F.chat.type == "private")
     dp.callback_query.register(open_admin_panel, F.data == "open_admin")
+    dp.callback_query.register(cb_admin_full_scan, F.data == "admin_full_scan")
     dp.callback_query.register(cb_admin_stats, F.data == "admin_stats")
     dp.callback_query.register(admin_list_users, F.data.startswith("admin_list_users:"))
     dp.callback_query.register(cb_admin_broadcast_start, F.data == "admin_broadcast_start")
