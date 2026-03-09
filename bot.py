@@ -307,6 +307,22 @@ def is_scanning(admin_id: int) -> bool:
         scan_sessions.pop(admin_id, None)
         return False
     return True
+async def cb_admin_start_scan(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("❌ Ruxsat yo'q", show_alert=True)
+        return
+
+    await start_scan_for(call.from_user.id, minutes=30)  # masalan 30 daqiqa scan
+    await call.answer("🔍 Scan sessiyasi boshlandi! Forward qilingan postlarni yuboring.")
+    if call.message:
+        await call.message.edit_text(
+            "🔍 Scan sessiyasi boshlandi!\n"
+            "Forward qilgan postlaringizdagi kino kodlari avtomatik saqlanadi.\n"
+            "Scan tugashidan oldin /stop_scan yozing yoki tugmani bosing.",
+            reply_markup=make_markup([
+                [InlineKeyboardButton(text="⏹️ Scanni to‘xtatish", callback_data="admin_stop_scan")]
+            ])
+        )
 
 async def start_scan_for(admin_id: int, minutes: int):
     """Start scan session for admin"""
@@ -463,6 +479,8 @@ def admin_main_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="➖ Admin o'chirish", callback_data="admin_removeadmin")],
         [InlineKeyboardButton(text="📺 Kanal qo'shish", callback_data="admin_addchannel"),
          InlineKeyboardButton(text="🗑️ Kanallarni tozalash", callback_data="admin_clearchannels")],
+        [InlineKeyboardButton(text="🔍 Scan boshlash", callback_data="admin_start_scan"),
+         InlineKeyboardButton(text="⏹️ Scan to‘xtatish", callback_data="admin_stop_scan")],
     ]
     return make_markup(rows)
 
@@ -589,49 +607,39 @@ async def on_channel_post(message: Message):
             await notify_admins_new_code(code=code, channel_obj=ch, post_id=message.message_id, title=title)
     except Exception:
         logger.exception("on_channel_post error")
-
 async def on_forwarded_message(message: Message):
     if not message.forward_from_chat:
         return
     admin_id = message.from_user.id
     if not is_admin(admin_id) or not is_scanning(admin_id):
-        return
-    try:
-        origin_chat = message.forward_from_chat
-        origin_channel_id = origin_chat.id if origin_chat else None
-        origin_msg_id = message.forward_from_message_id or message.message_id
-    except Exception:
-        origin_channel_id = None
-        origin_msg_id = message.message_id
-    
+        return  # scan faolligi yo'q
+
     caption = message.caption or (message.text or "")
     m = re.search(r'Kino kodi[:\-]?\s*(\d+)', caption or "", re.I)
     if not m:
-        logger.info("Forwarded message (no code) skipped by admin during scan")
         return
     code = m.group(1)
     existing = await get_movie_by_code(code)
     title = re.sub(r'Kino kodi[:\-]?\s*\d+', '', caption, flags=re.I).strip()
-    
+
+    # Agar mavjud bo'lsa, yangilash
+    origin_chat = message.forward_from_chat
+    origin_msg_id = message.forward_from_message_id or message.message_id
+    msg_ch = str(origin_chat.id) if origin_chat else ""
+
     if existing:
         existing_ch = str(existing.get("channel_id") or "")
         existing_post = existing.get("post_id")
-        msg_ch = str(origin_channel_id) if origin_channel_id is not None else ""
         if existing_ch != msg_ch or existing_post != origin_msg_id:
             await save_movie(code, origin_msg_id, channel_id=msg_ch, title=title)
-            logger.info("Updated code=%s with new origin ch=%s post=%s", code, msg_ch, origin_msg_id)
-        else:
-            logger.info("Forwarded code already exists: %s", code)
         return
-    
-    await save_movie(code, origin_msg_id, channel_id=str(origin_channel_id) if origin_channel_id is not None else "", title=title)
+
+    # Yangi kod saqlash
+    await save_movie(code, origin_msg_id, channel_id=msg_ch, title=title)
     try:
         await message.reply(f"✅ Saqlandi: {code}", quote=True)
     except Exception:
         pass
-    logger.info("Imported forwarded code=%s from origin ch=%s post=%s", code, origin_channel_id, origin_msg_id)
-
-
 async def open_admin_panel(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
         await call.answer("❌ Bu funksiya faqat adminlar uchun", show_alert=True)
